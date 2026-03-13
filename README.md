@@ -171,10 +171,10 @@ Add a shell alias so every `claude` session is transparently recorded:
 
 ```bash
 # ~/.bashrc or ~/.zshrc
-alias dev='script -q -a ~/.engram/short-term-memory/session_$(date +%Y%m%d_%H%M%S)_log.txt -c "claude"'
+alias ae-claude='script -q -a ~/.engram/short-term-memory/session_$(date +%Y%m%d_%H%M%S)_log.txt -c "claude"'
 ```
 
-Then simply run `dev` instead of `claude`. All terminal I/O is streamed into `short-term-memory/` with zero overhead.
+Then simply run `ae-claude` instead of `claude`. All terminal I/O is streamed into `short-term-memory/` with zero overhead.
 
 ### Agent 2 (Miner) -- Connecting an LLM
 

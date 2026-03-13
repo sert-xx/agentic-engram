@@ -171,10 +171,10 @@ Review the results before attempting a fix from scratch.
 
 ```bash
 # ~/.bashrc or ~/.zshrc
-alias dev='script -q -a ~/.engram/short-term-memory/session_$(date +%Y%m%d_%H%M%S)_log.txt -c "claude"'
+alias ae-claude='script -q -a ~/.engram/short-term-memory/session_$(date +%Y%m%d_%H%M%S)_log.txt -c "claude"'
 ```
 
-`claude`の代わりに`dev`を実行するだけで、すべてのターミナルI/Oがオーバーヘッドなしで`short-term-memory/`にストリーミングされる。
+`claude`の代わりに`ae-claude`を実行するだけで、すべてのターミナルI/Oがオーバーヘッドなしで`short-term-memory/`にストリーミングされる。
 
 ### エージェント2（マイナー） -- LLMの接続
 
