@@ -41,7 +41,7 @@ if st.button("Search") and query:
         else:
             st.warning("No results found.")
     except ValueError as e:
-        st.error(f"カテゴリフィルターの入力が不正です: {e}")
+        st.error(f"Invalid category filter: {e}")
 
 # --- Memory List ---
 st.header("All Memories")

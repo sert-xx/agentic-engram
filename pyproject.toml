@@ -5,7 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentic-engram"
 version = "0.1.0"
+description = "Autonomous local memory ecosystem for AI coding agents"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "lancedb",
     "sentence-transformers",
@@ -15,6 +29,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+
+[project.urls]
+Repository = "https://github.com/sert-xx/agentic-engram"
 
 [tool.setuptools.packages.find]
 where = ["src"]
