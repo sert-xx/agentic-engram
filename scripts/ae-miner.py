@@ -6,7 +6,72 @@ cron等で定期実行し、short-term-memory/ の生ログから記憶を抽出
 
 import argparse
 import os
+import subprocess
 import sys
+
+LLM_CHOICES = ["claude-code", "codex", "gemini"]
+
+
+def _extract_json_array(text: str) -> str:
+    """LLMレスポンスからJSON配列部分を抽出する。
+
+    CLIツールの出力にはmarkdownフェンスや説明文が含まれることがあるため、
+    最初の [...] ブロックを探して返す。見つからなければ元テキストをそのまま返す。
+    """
+    start = text.find("[")
+    if start == -1:
+        return text
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "[":
+            depth += 1
+        elif text[i] == "]":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return text
+
+
+def _make_cli_llm(cli_name: str):
+    """CLI名に応じた llm_fn を返すファクトリ。"""
+
+    configs = {
+        "claude-code": {
+            "cmd": ["claude", "-p", "--output-format", "text"],
+        },
+        "codex": {
+            "cmd": ["codex", "-q"],
+        },
+        "gemini": {
+            "cmd": ["gemini"],
+        },
+    }
+    config = configs[cli_name]
+
+    def llm_fn(messages: list) -> str:
+        prompt = messages[0]["content"] + "\n\n" + messages[1]["content"]
+
+        env = dict(os.environ)
+        # Claude Code はネスト起動を禁止するため、環境変数を除去して回避
+        if cli_name == "claude-code":
+            env.pop("CLAUDECODE", None)
+
+        result = subprocess.run(
+            config["cmd"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=env,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"{cli_name} exited with code {result.returncode}: "
+                f"{result.stderr[:500]}"
+            )
+        return _extract_json_array(result.stdout)
+
+    return llm_fn
 
 
 def main():
@@ -38,6 +103,12 @@ def main():
         help="Days before a stale log is archived",
     )
     parser.add_argument(
+        "--llm",
+        choices=LLM_CHOICES,
+        default=None,
+        help="CLI tool to use as LLM backend (claude-code, codex, gemini)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be processed without actually calling LLM",
@@ -63,33 +134,32 @@ def main():
             if args.dry_run:
                 for t in targets:
                     print(f"  [DRY RUN] {t['filename']}")
+            elif args.llm is None:
+                print(
+                    "Error: --llm is required when not using --dry-run.\n"
+                    f"  Choices: {', '.join(LLM_CHOICES)}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             else:
-                # NOTE: 実運用では llm_fn に実際のLLM呼び出しを渡す
-                # ここではプレースホルダーとしてエラーを出す
-                def _llm_placeholder(messages):
-                    raise NotImplementedError(
-                        "LLM function not configured. "
-                        "Set up an LLM provider (e.g., OpenAI, Anthropic) "
-                        "and pass it as llm_fn."
-                    )
+                llm_fn = _make_cli_llm(args.llm)
 
-                all_skipped = True
                 for t in targets:
                     print(f"  Processing: {t['filename']} ...")
                     try:
                         process_log(
                             t["filepath"],
                             cm,
-                            _llm_placeholder,
+                            llm_fn,
                             db_path=args.db_path,
                         )
-                        all_skipped = False
-                    except NotImplementedError as e:
-                        print(f"    Skipped (no LLM configured): {e}", file=sys.stderr)
-
-                # 全ターゲットがLLM未設定でスキップされた場合は異常終了
-                if all_skipped:
-                    sys.exit(1)
+                    except subprocess.TimeoutExpired:
+                        print(
+                            f"    Timeout: {args.llm} did not respond within 300s",
+                            file=sys.stderr,
+                        )
+                    except RuntimeError as e:
+                        print(f"    Error: {e}", file=sys.stderr)
 
         # 2. アーカイブ
         archive_stale_logs(args.log_dir, archive_dir, cm, ttl_days=args.ttl_days)

@@ -73,11 +73,11 @@ python scripts/ae-recall.py --query "CORS error" --format json --limit 3
 
 ### マイナーの実行
 
-> **注意:** `ae-miner`のLLM統合はCLIレベルではまだ未実装。
-> `--dry-run`のみ動作し、対象ログファイルの一覧をプレビューする（実際の処理は行わない）。
-
 ```bash
-python scripts/ae-miner.py --dry-run       # 対象ログファイルをプレビュー（LLM不要）
+python scripts/ae-miner.py --dry-run                # 対象ログファイルをプレビュー（LLM不要）
+python scripts/ae-miner.py --llm claude-code         # Claude CodeをLLMバックエンドとして使用
+python scripts/ae-miner.py --llm codex               # Codex CLIを使用
+python scripts/ae-miner.py --llm gemini              # Gemini CLIを使用
 ```
 
 ### コンソールの起動
@@ -133,7 +133,8 @@ python scripts/ae-recall.py --query "..." [--format json|markdown] [--limit N] [
 セッションログをスキャンし、LLMでナレッジを抽出し、メモリDBに保存する。
 
 ```
-python scripts/ae-miner.py [--log-dir DIR] [--db-path PATH] [--cursor-path PATH]
+python scripts/ae-miner.py --llm claude-code|codex|gemini
+                           [--log-dir DIR] [--db-path PATH] [--cursor-path PATH]
                            [--archive-dir DIR] [--ttl-days N] [--dry-run]
 ```
 
@@ -176,49 +177,38 @@ alias ae-claude='script -q -a ~/.engram/short-term-memory/session_$(date +%Y%m%d
 
 `claude`の代わりに`ae-claude`を実行するだけで、すべてのターミナルI/Oがオーバーヘッドなしで`short-term-memory/`にストリーミングされる。
 
-### エージェント2（マイナー） -- LLMの接続
+### エージェント2（マイナー） -- AIコーディングエージェントCLIの利用
 
-`ae-miner`は`process_log()`に渡す`llm_fn`コールバックを通じてナレッジ抽出をLLMに委譲する。デフォルトのCLIスクリプトは`NotImplementedError`を送出するプレースホルダーを使用している。実際のプロバイダに置き換える：
+`ae-miner`はAIコーディングエージェントCLI（Claude Code、Codex CLI、Gemini CLI）をLLMバックエンドとして使用する。別途APIキーを設定する必要はなく、すでに認証済みのCLIツールに処理を委譲する。
 
-#### Pythonでllm_fnを渡す
+```bash
+python scripts/ae-miner.py --llm claude-code   # `claude -p` を使用
+python scripts/ae-miner.py --llm codex          # `codex -q` を使用
+python scripts/ae-miner.py --llm gemini         # `gemini` を使用
+```
+
+#### PythonでカスタムLLMを渡す
+
+CLIツールを使わずAPIを直接呼び出す場合は、`process_log()`にカスタム`llm_fn`コールバックを渡す：
 
 ```python
 from engram.cursor import CursorManager
 from engram.miner import scan_logs, process_log
-
 import os
 
 cm = CursorManager(os.path.expanduser("~/.engram/config/cursor.json"))
 
 # -- OpenAIの例 --
 from openai import OpenAI
-client = OpenAI()  # 環境変数 OPENAI_API_KEY を使用
+client = OpenAI()
 
 def llm_fn(messages: list[dict]) -> str:
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        temperature=0.2,
-    )
+    resp = client.chat.completions.create(model="gpt-4o", messages=messages, temperature=0.2)
     return resp.choices[0].message.content
-
-# -- Anthropicの代替（上記と差し替え） --
-# from anthropic import Anthropic
-# client = Anthropic()
-# def llm_fn(messages):
-#     # messages[0]は常にsystemロール
-#     resp = client.messages.create(model="claude-sonnet-4-20250514", max_tokens=4096,
-#                                    system=messages[0]["content"],
-#                                    messages=messages[1:])
-#     return resp.content[0].text
 
 for target in scan_logs(os.path.expanduser("~/.engram/short-term-memory"), cm):
     process_log(target["filepath"], cm, llm_fn, db_path=os.path.expanduser("~/.engram/memory-db/vector_store"))
 ```
-
-#### ae-miner.pyのカスタマイズ
-
-最も簡単な方法は`scripts/ae-miner.py`を直接編集すること。`_llm_placeholder`関数（69行目付近）を上記の`llm_fn`実装に置き換えるだけでよい。それ以外の部分（スキャン、アーカイブ、カーソル管理）はそのまま動作する。
 
 ## 自動スケジューリング
 
@@ -231,7 +221,7 @@ crontab -e
 ```
 
 ```cron
-*/30 * * * * cd /path/to/agentic-engram && /path/to/python scripts/ae-miner.py >> ~/.engram/miner.log 2>&1
+*/30 * * * * cd /path/to/agentic-engram && .venv/bin/python scripts/ae-miner.py --llm claude-code >> ~/.engram/miner.log 2>&1
 ```
 
 ### launchd（macOSネイティブ）
@@ -248,16 +238,13 @@ crontab -e
   <string>com.engram.miner</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/path/to/python</string>
+    <string>/path/to/agentic-engram/.venv/bin/python</string>
     <string>/path/to/agentic-engram/scripts/ae-miner.py</string>
+    <string>--llm</string>
+    <string>claude-code</string>
   </array>
   <key>StartInterval</key>
   <integer>1800</integer>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>OPENAI_API_KEY</key>
-    <string>YOUR_API_KEY_HERE</string>
-  </dict>
   <key>StandardOutPath</key>
   <string>/Users/YOU/.engram/miner.log</string>
   <key>StandardErrorPath</key>
@@ -265,8 +252,6 @@ crontab -e
 </dict>
 </plist>
 ```
-
-> **セキュリティ:** plistにはAPIキーが平文で含まれる。`chmod 600 ~/Library/LaunchAgents/com.engram.miner.plist`でパーミッションを制限すること。より強固な保護が必要な場合は、ここにハードコードするのではなく、macOS Keychainにキーを保存してランタイムで取得することを検討する。
 
 読み込む：
 

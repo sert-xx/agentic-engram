@@ -73,11 +73,11 @@ python scripts/ae-recall.py --query "CORS error" --format json --limit 3
 
 ### Run the miner
 
-> **Note:** LLM integration in `ae-miner` is not yet implemented at the CLI level.
-> Only `--dry-run` is functional; it previews the list of target log files without processing them.
-
 ```bash
-python scripts/ae-miner.py --dry-run       # preview target log files (no LLM required)
+python scripts/ae-miner.py --dry-run                # preview target log files (no LLM required)
+python scripts/ae-miner.py --llm claude-code         # use Claude Code as LLM backend
+python scripts/ae-miner.py --llm codex               # use Codex CLI
+python scripts/ae-miner.py --llm gemini              # use Gemini CLI
 ```
 
 ### Launch the console
@@ -133,7 +133,8 @@ python scripts/ae-recall.py --query "..." [--format json|markdown] [--limit N] [
 Scans session logs, extracts knowledge via LLM, saves to memory DB.
 
 ```
-python scripts/ae-miner.py [--log-dir DIR] [--db-path PATH] [--cursor-path PATH]
+python scripts/ae-miner.py --llm claude-code|codex|gemini
+                           [--log-dir DIR] [--db-path PATH] [--cursor-path PATH]
                            [--archive-dir DIR] [--ttl-days N] [--dry-run]
 ```
 
@@ -176,49 +177,38 @@ alias ae-claude='script -q -a ~/.engram/short-term-memory/session_$(date +%Y%m%d
 
 Then simply run `ae-claude` instead of `claude`. All terminal I/O is streamed into `short-term-memory/` with zero overhead.
 
-### Agent 2 (Miner) -- Connecting an LLM
+### Agent 2 (Miner) -- Using AI CLI Tools
 
-`ae-miner` delegates knowledge extraction to an LLM via the `llm_fn` callback passed to `process_log()`. The default CLI script uses a placeholder that raises `NotImplementedError`. Replace it with a real provider:
+`ae-miner` uses AI coding agent CLIs (Claude Code, Codex CLI, Gemini CLI) as the LLM backend for knowledge extraction. No API keys need to be configured separately -- it delegates to whichever CLI tool you already have authenticated.
 
-#### Passing llm_fn via Python
+```bash
+python scripts/ae-miner.py --llm claude-code   # uses `claude -p`
+python scripts/ae-miner.py --llm codex          # uses `codex -q`
+python scripts/ae-miner.py --llm gemini         # uses `gemini`
+```
+
+#### Custom LLM via Python
+
+For direct API integration (without a CLI tool), pass a custom `llm_fn` callback to `process_log()`:
 
 ```python
 from engram.cursor import CursorManager
 from engram.miner import scan_logs, process_log
-
 import os
 
 cm = CursorManager(os.path.expanduser("~/.engram/config/cursor.json"))
 
 # -- OpenAI example --
 from openai import OpenAI
-client = OpenAI()  # uses OPENAI_API_KEY env var
+client = OpenAI()
 
 def llm_fn(messages: list[dict]) -> str:
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        temperature=0.2,
-    )
+    resp = client.chat.completions.create(model="gpt-4o", messages=messages, temperature=0.2)
     return resp.choices[0].message.content
-
-# -- Anthropic alternative (swap in place of the above) --
-# from anthropic import Anthropic
-# client = Anthropic()
-# def llm_fn(messages):
-#     # messages[0] is always the system role
-#     resp = client.messages.create(model="claude-sonnet-4-20250514", max_tokens=4096,
-#                                    system=messages[0]["content"],
-#                                    messages=messages[1:])
-#     return resp.content[0].text
 
 for target in scan_logs(os.path.expanduser("~/.engram/short-term-memory"), cm):
     process_log(target["filepath"], cm, llm_fn, db_path=os.path.expanduser("~/.engram/memory-db/vector_store"))
 ```
-
-#### Customizing ae-miner.py
-
-The simplest approach is to edit `scripts/ae-miner.py` directly. Replace the `_llm_placeholder` function (around line 69) with the `llm_fn` implementation shown above. No other changes are needed -- the rest of the script (scanning, archiving, cursor management) works as-is.
 
 ## Automated Scheduling
 
@@ -231,7 +221,7 @@ crontab -e
 ```
 
 ```cron
-*/30 * * * * cd /path/to/agentic-engram && /path/to/python scripts/ae-miner.py >> ~/.engram/miner.log 2>&1
+*/30 * * * * cd /path/to/agentic-engram && .venv/bin/python scripts/ae-miner.py --llm claude-code >> ~/.engram/miner.log 2>&1
 ```
 
 ### launchd (macOS native)
@@ -248,16 +238,13 @@ Create `~/Library/LaunchAgents/com.engram.miner.plist`:
   <string>com.engram.miner</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/path/to/python</string>
+    <string>/path/to/agentic-engram/.venv/bin/python</string>
     <string>/path/to/agentic-engram/scripts/ae-miner.py</string>
+    <string>--llm</string>
+    <string>claude-code</string>
   </array>
   <key>StartInterval</key>
   <integer>1800</integer>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>OPENAI_API_KEY</key>
-    <string>YOUR_API_KEY_HERE</string>
-  </dict>
   <key>StandardOutPath</key>
   <string>/Users/YOU/.engram/miner.log</string>
   <key>StandardErrorPath</key>
@@ -265,8 +252,6 @@ Create `~/Library/LaunchAgents/com.engram.miner.plist`:
 </dict>
 </plist>
 ```
-
-> **Security:** The plist contains a plain-text API key. Restrict permissions with `chmod 600 ~/Library/LaunchAgents/com.engram.miner.plist`. For stronger protection, consider storing the key in macOS Keychain and retrieving it at runtime instead of hardcoding it here.
 
 Load it:
 
