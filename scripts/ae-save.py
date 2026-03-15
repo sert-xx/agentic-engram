@@ -14,6 +14,11 @@ def main():
         default=os.path.expanduser("~/.engram/memory-db/vector_store"),
         help="Path to LanceDB database directory",
     )
+    parser.add_argument(
+        "--graph-path",
+        default=os.path.expanduser("~/.engram/memory-db/graph_store"),
+        help="Path to Kuzu graph database directory (set to empty string to disable)",
+    )
     args = parser.parse_args()
 
     try:
@@ -30,7 +35,8 @@ def main():
     try:
         from engram.save import save_memories, SaveValidationError
 
-        result = save_memories(payload, db_path=args.db_path)
+        graph_path = args.graph_path if args.graph_path else None
+        result = save_memories(payload, db_path=args.db_path, graph_path=graph_path)
         print(json.dumps(result, ensure_ascii=False))
     except SaveValidationError as e:
         print(f"Validation Error [{e.error_code}]: {e}", file=sys.stderr)

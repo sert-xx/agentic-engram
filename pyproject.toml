@@ -25,6 +25,7 @@ dependencies = [
     "sentence-transformers",
     "pyarrow",
     "streamlit",
+    "kuzu",
 ]
 
 [project.optional-dependencies]
