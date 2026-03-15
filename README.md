@@ -4,57 +4,51 @@
 
 **Autonomous local memory ecosystem for AI coding agents -- inspired by how human memory works.**
 
-Agentic Engram captures raw development session logs, extracts reusable knowledge via LLM, and stores it in a local vector database. Agents can then recall past lessons by semantic search -- no cloud, no Docker, no running server.
+Agentic Engram reads native session logs from AI coding agents (Claude Code, Codex CLI, etc.), extracts reusable knowledge via LLM, and stores it in a local vector + graph database. Agents can then recall past lessons by semantic search -- no cloud, no Docker, no running server.
 
 ## Concept
 
 ```mermaid
 flowchart LR
-    A["Terminal Session\n(script command)"] -->|raw log| B["short-term-memory/"]
+    A["AI Coding Agent\n(Claude Code, Codex, etc.)"] -->|native JSONL logs| B["~/.claude/projects/"]
     B -->|diff via mtime + cursor| C["ae-miner\n(LLM extraction)"]
-    C -->|JSON| D["ae-save\n(LanceDB + embeddings)"]
-    D --> E["memory-db/\nvector_store"]
-    E -->|semantic search| F["ae-recall"]
+    C -->|JSON| D["ae-save\n(LanceDB + Kuzu)"]
+    D --> E["memory-db/\nvector_store + graph_store"]
+    E -->|hybrid search| F["ae-recall"]
     F -->|context| A
     E --> G["ae-console\n(Streamlit UI)"]
 ```
 
 **Lifecycle:**
 
-1. **Capture** -- `script` command streams terminal I/O into `~/.engram/short-term-memory/`.
-2. **Mine** -- `ae-miner` (cron) detects changed logs via `mtime` + line-pointer cursor, sends diffs to an LLM, which decides INSERT / UPDATE / SKIP.
-3. **Store** -- `ae-save` embeds payloads with `sentence-transformers` and upserts into LanceDB.
-4. **Recall** -- `ae-recall` performs cosine-similarity search. Agents call it autonomously when they hit unknown errors.
-5. **Manage** -- `ae-console` provides a Streamlit dashboard for browsing, searching, and deleting memories.
+1. **Capture** -- AI coding agents (Claude Code, etc.) automatically save structured session logs (JSONL) as part of their normal operation. No additional recording setup needed.
+2. **Mine** -- `ae-miner` (cron) detects changed logs via `mtime` + line-pointer cursor, parses JSONL into readable text, sends diffs to an LLM, which decides INSERT / UPDATE / SKIP.
+3. **Store** -- `ae-save` embeds payloads with `sentence-transformers` and upserts into LanceDB. Entities and relations are synced to Kuzu graph DB.
+4. **Recall** -- `ae-recall` performs hybrid search (vector similarity + graph traversal). Agents call it autonomously when they hit unknown errors.
+5. **Manage** -- `ae-console` provides a Streamlit dashboard for browsing, searching, deleting memories and exploring the entity graph.
 
 ## Features
 
-- Fully local, zero-overhead -- file-system based, no external APIs or servers required
+- Fully local, zero-overhead -- reads native agent logs, no external APIs or servers required
 - Filebeat-style crash resilience -- state tracked by `mtime` + line pointer only, no status flags
 - Deterministic IDs (SHA-256) for idempotent upserts
-- Semantic search via LanceDB + `paraphrase-multilingual-MiniLM-L12-v2` (384-dim)
+- Hybrid search: vector similarity (LanceDB + `paraphrase-multilingual-MiniLM-L12-v2`) + graph traversal (Kuzu)
 - Category and tag filtering
-- TTL-based auto-archiving of stale logs
-- Streamlit management console
-- Graph DB extension points (`entities_json`, `relations_json`) reserved for V2
+- Native JSONL parser for Claude Code (extensible to other CLI tools)
+- TTL-based auto-archiving of stale logs (text source mode)
+- Streamlit management console with entity graph visualization
 
 ## Quick Start
 
 ### Requirements
 
 - Python 3.9+
-- LLM provider (OpenAI, Anthropic, etc.): **not required** for `ae-save`, `ae-recall`, or `ae-console`. `ae-miner` is designed to use an LLM for log extraction, but CLI-level integration is not yet implemented.
+- An AI coding agent that saves session logs (e.g., Claude Code)
 
 ### Install
 
 ```bash
 pip install -e ".[dev]"
-```
-
-### Record a session
-
-```bash
-script -q -a ~/.engram/short-term-memory/session_$(date +%Y%m%d_%H%M%S)_log.txt
 ```
 
 ### Save a memory manually
@@ -75,9 +69,10 @@ python scripts/ae-recall.py --query "CORS error" --format json --limit 3
 
 ```bash
 python scripts/ae-miner.py --dry-run                # preview target log files (no LLM required)
-python scripts/ae-miner.py --llm claude-code         # use Claude Code as LLM backend
-python scripts/ae-miner.py --llm codex               # use Codex CLI
-python scripts/ae-miner.py --llm gemini              # use Gemini CLI
+python scripts/ae-miner.py --llm claude-code         # mine Claude Code JSONL logs (default)
+python scripts/ae-miner.py --llm codex               # use Codex CLI as LLM backend
+python scripts/ae-miner.py --llm gemini              # use Gemini CLI as LLM backend
+python scripts/ae-miner.py --source text --llm claude-code  # legacy: mine raw text logs
 ```
 
 ### Launch the console
@@ -90,11 +85,9 @@ streamlit run scripts/ae-console.py
 
 ```
 ~/.engram/
-  short-term-memory/     Raw session logs (short-term memory)
-    archive/             TTL-expired logs
   memory-db/
     vector_store/        LanceDB data (semantic search)
-    graph_store/         [V2] Kuzu data (logical network)
+    graph_store/         Kuzu data (entity graph)
   config/
     cursor.json          Line pointer + mtime per log file
 ```
@@ -102,13 +95,15 @@ streamlit run scripts/ae-console.py
 | Component | File | Role |
 |-----------|------|------|
 | `db` | `src/engram/db.py` | LanceDB connection, schema, CRUD |
-| `save` | `src/engram/save.py` | Validation, ID generation, upsert logic |
-| `recall` | `src/engram/recall.py` | Semantic search, output formatting |
-| `miner` | `src/engram/miner.py` | Log scanning, diff reading, LLM orchestration, archiving |
+| `save` | `src/engram/save.py` | Validation, ID generation, upsert logic, graph sync |
+| `recall` | `src/engram/recall.py` | Hybrid search (vector + graph), output formatting |
+| `graph` | `src/engram/graph.py` | Kuzu graph DB: entity/relation CRUD, traversal |
+| `miner` | `src/engram/miner.py` | Log scanning, diff reading, LLM orchestration |
+| `parsers` | `src/engram/parsers/` | Native log parsers (Claude Code JSONL, extensible) |
 | `cursor` | `src/engram/cursor.py` | Atomic cursor.json state management |
 | `prompts` | `src/engram/prompts.py` | LLM prompt construction for extraction |
 | `embedder` | `src/engram/embedder.py` | Sentence-transformers singleton wrapper |
-| `console` | `src/engram/console.py` | Streamlit UI logic (stats, browse, delete) |
+| `console` | `src/engram/console.py` | Streamlit UI logic (stats, browse, delete, graph) |
 
 ## CLI Reference
 
@@ -117,30 +112,31 @@ streamlit run scripts/ae-console.py
 Reads a JSON array from stdin, validates, embeds, and upserts into LanceDB.
 
 ```
-python scripts/ae-save.py [--db-path PATH]
+python scripts/ae-save.py [--db-path PATH] [--graph-path PATH]
 ```
 
 ### ae-recall
 
-Searches memories by semantic similarity.
+Searches memories by semantic similarity with optional graph boost.
 
 ```
 python scripts/ae-recall.py --query "..." [--format json|markdown] [--limit N] [--category CAT]
+                            [--graph-path PATH] [--no-graph]
 ```
 
 ### ae-miner
 
-Scans session logs, extracts knowledge via LLM, saves to memory DB.
+Parses native session logs, extracts knowledge via LLM, saves to memory DB.
 
 ```
 python scripts/ae-miner.py --llm claude-code|codex|gemini
-                           [--log-dir DIR] [--db-path PATH] [--cursor-path PATH]
-                           [--archive-dir DIR] [--ttl-days N] [--dry-run]
+                           [--source claude-code|text] [--log-dir DIR]
+                           [--db-path PATH] [--cursor-path PATH] [--dry-run]
 ```
 
 ### ae-console
 
-Streamlit web dashboard for memory management.
+Streamlit web dashboard for memory and graph management.
 
 ```
 streamlit run scripts/ae-console.py
@@ -148,15 +144,13 @@ streamlit run scripts/ae-console.py
 
 ## Integration with AI Agents
 
-### Agent 1 (Development Agent) -- Autonomous Recall
+### Autonomous Recall
 
 #### Registering ae-recall as a Skill in CLAUDE.md
 
 Add the following to your project's `CLAUDE.md` (or `~/.claude/CLAUDE.md` for global access):
 
 ```markdown
-# Skills
-
 ## Memory Recall
 When you encounter an unfamiliar error, unexpected behavior, or need to check
 if a similar problem was solved before, run:
@@ -166,23 +160,12 @@ Review the results before attempting a fix from scratch.
 
 The agent will then autonomously invoke `ae-recall` when it hits unknown errors, retrieving past lessons before trying to solve problems from scratch.
 
-#### Auto-recording development sessions
+### Miner -- Using AI CLI Tools
 
-Add a shell alias so every `claude` session is transparently recorded:
-
-```bash
-# ~/.bashrc or ~/.zshrc
-alias ae-claude='script -q -a ~/.engram/short-term-memory/session_$(date +%Y%m%d_%H%M%S)_log.txt -c "claude"'
-```
-
-Then simply run `ae-claude` instead of `claude`. All terminal I/O is streamed into `short-term-memory/` with zero overhead.
-
-### Agent 2 (Miner) -- Using AI CLI Tools
-
-`ae-miner` uses AI coding agent CLIs (Claude Code, Codex CLI, Gemini CLI) as the LLM backend for knowledge extraction. No API keys need to be configured separately -- it delegates to whichever CLI tool you already have authenticated.
+`ae-miner` reads native session logs (JSONL) from AI coding agents and uses CLI tools as the LLM backend for knowledge extraction. No additional recording setup or API keys needed.
 
 ```bash
-python scripts/ae-miner.py --llm claude-code   # uses `claude -p`
+python scripts/ae-miner.py --llm claude-code   # reads ~/.claude/projects/, uses `claude -p`
 python scripts/ae-miner.py --llm codex          # uses `codex -q`
 python scripts/ae-miner.py --llm gemini         # uses `gemini`
 ```
@@ -193,12 +176,13 @@ For direct API integration (without a CLI tool), pass a custom `llm_fn` callback
 
 ```python
 from engram.cursor import CursorManager
-from engram.miner import scan_logs, process_log
+from engram.parsers.claude_code import ClaudeCodeParser
+from engram.miner import process_log
 import os
 
 cm = CursorManager(os.path.expanduser("~/.engram/config/cursor.json"))
+parser = ClaudeCodeParser()
 
-# -- OpenAI example --
 from openai import OpenAI
 client = OpenAI()
 
@@ -206,8 +190,8 @@ def llm_fn(messages: list[dict]) -> str:
     resp = client.chat.completions.create(model="gpt-4o", messages=messages, temperature=0.2)
     return resp.choices[0].message.content
 
-for target in scan_logs(os.path.expanduser("~/.engram/short-term-memory"), cm):
-    process_log(target["filepath"], cm, llm_fn, db_path=os.path.expanduser("~/.engram/memory-db/vector_store"))
+for target in parser.scan(cm):
+    process_log(target["filepath"], cm, llm_fn, db_path=os.path.expanduser("~/.engram/memory-db/vector_store"), parser=parser)
 ```
 
 ## Automated Scheduling
