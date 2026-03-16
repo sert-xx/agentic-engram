@@ -34,7 +34,7 @@ flowchart LR
 - Deterministic IDs (SHA-256) for idempotent upserts
 - Hybrid search: vector similarity (LanceDB + `paraphrase-multilingual-MiniLM-L12-v2`) + graph traversal (Kuzu)
 - Category and tag filtering
-- Native JSONL parser for Claude Code (extensible to other CLI tools)
+- Native JSONL parsers for Claude Code and Codex CLI (extensible to other CLI tools)
 - TTL-based auto-archiving of stale logs (text source mode)
 - Streamlit management console with entity graph visualization
 
@@ -70,6 +70,7 @@ python scripts/ae-recall.py --query "CORS error" --format json --limit 3
 ```bash
 python scripts/ae-miner.py --dry-run                # preview target log files (no LLM required)
 python scripts/ae-miner.py --llm claude-code         # mine Claude Code JSONL logs (default)
+python scripts/ae-miner.py --source codex --llm claude-code  # mine Codex CLI JSONL logs
 python scripts/ae-miner.py --llm codex               # use Codex CLI as LLM backend
 python scripts/ae-miner.py --llm gemini              # use Gemini CLI as LLM backend
 python scripts/ae-miner.py --source text --llm claude-code  # legacy: mine raw text logs
@@ -99,7 +100,7 @@ streamlit run scripts/ae-console.py
 | `recall` | `src/engram/recall.py` | Hybrid search (vector + graph), output formatting |
 | `graph` | `src/engram/graph.py` | Kuzu graph DB: entity/relation CRUD, traversal |
 | `miner` | `src/engram/miner.py` | Log scanning, diff reading, LLM orchestration |
-| `parsers` | `src/engram/parsers/` | Native log parsers (Claude Code JSONL, extensible) |
+| `parsers` | `src/engram/parsers/` | Native log parsers (Claude Code, Codex CLI) |
 | `cursor` | `src/engram/cursor.py` | Atomic cursor.json state management |
 | `prompts` | `src/engram/prompts.py` | LLM prompt construction for extraction |
 | `embedder` | `src/engram/embedder.py` | Sentence-transformers singleton wrapper |
@@ -130,7 +131,7 @@ Parses native session logs, extracts knowledge via LLM, saves to memory DB.
 
 ```
 python scripts/ae-miner.py --llm claude-code|codex|gemini
-                           [--source claude-code|text] [--log-dir DIR]
+                           [--source claude-code|codex|text] [--log-dir DIR]
                            [--db-path PATH] [--cursor-path PATH] [--dry-run]
 ```
 
@@ -166,7 +167,8 @@ The agent will then autonomously invoke `ae-recall` when it hits unknown errors,
 
 ```bash
 python scripts/ae-miner.py --llm claude-code   # reads ~/.claude/projects/, uses `claude -p`
-python scripts/ae-miner.py --llm codex          # uses `codex -q`
+python scripts/ae-miner.py --source codex --llm claude-code  # reads ~/.codex/sessions/, uses `claude -p`
+python scripts/ae-miner.py --llm codex          # uses `codex exec`
 python scripts/ae-miner.py --llm gemini         # uses `gemini`
 ```
 

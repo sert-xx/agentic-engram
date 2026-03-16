@@ -34,7 +34,7 @@ flowchart LR
 - 決定論的ID（SHA-256）による冪等upsert
 - ハイブリッド検索：ベクトル類似度（LanceDB + `paraphrase-multilingual-MiniLM-L12-v2`）+ グラフトラバーサル（Kuzu）
 - カテゴリ・タグフィルタリング
-- Claude Code用ネイティブJSONLパーサー（他CLIツールへの拡張可能）
+- Claude Code・Codex CLI用ネイティブJSONLパーサー（他CLIツールへの拡張可能）
 - TTLベースの古いログの自動アーカイブ（テキストソースモード）
 - エンティティグラフ可視化付きStreamlit管理コンソール
 
@@ -70,6 +70,7 @@ python scripts/ae-recall.py --query "CORS error" --format json --limit 3
 ```bash
 python scripts/ae-miner.py --dry-run                # 対象ログファイルをプレビュー（LLM不要）
 python scripts/ae-miner.py --llm claude-code         # Claude Code JSONLログをマイニング（デフォルト）
+python scripts/ae-miner.py --source codex --llm claude-code  # Codex CLI JONLログをマイニング
 python scripts/ae-miner.py --llm codex               # Codex CLIをLLMバックエンドとして使用
 python scripts/ae-miner.py --llm gemini              # Gemini CLIをLLMバックエンドとして使用
 python scripts/ae-miner.py --source text --llm claude-code  # レガシー：生テキストログをマイニング
@@ -99,7 +100,7 @@ streamlit run scripts/ae-console.py
 | `recall` | `src/engram/recall.py` | ハイブリッド検索（ベクトル + グラフ）、出力フォーマット |
 | `graph` | `src/engram/graph.py` | Kuzuグラフ DB: エンティティ/リレーションCRUD、トラバーサル |
 | `miner` | `src/engram/miner.py` | ログスキャン、差分読み取り、LLMオーケストレーション |
-| `parsers` | `src/engram/parsers/` | ネイティブログパーサー（Claude Code JSONL、拡張可能） |
+| `parsers` | `src/engram/parsers/` | ネイティブログパーサー（Claude Code、Codex CLI） |
 | `cursor` | `src/engram/cursor.py` | cursor.jsonのアトミックな状態管理 |
 | `prompts` | `src/engram/prompts.py` | 抽出用LLMプロンプト構築 |
 | `embedder` | `src/engram/embedder.py` | sentence-transformersのシングルトンラッパー |
@@ -130,7 +131,7 @@ python scripts/ae-recall.py --query "..." [--format json|markdown] [--limit N] [
 
 ```
 python scripts/ae-miner.py --llm claude-code|codex|gemini
-                           [--source claude-code|text] [--log-dir DIR]
+                           [--source claude-code|codex|text] [--log-dir DIR]
                            [--db-path PATH] [--cursor-path PATH] [--dry-run]
 ```
 
@@ -166,7 +167,8 @@ Review the results before attempting a fix from scratch.
 
 ```bash
 python scripts/ae-miner.py --llm claude-code   # ~/.claude/projects/を読み取り、`claude -p`を使用
-python scripts/ae-miner.py --llm codex          # `codex -q`を使用
+python scripts/ae-miner.py --source codex --llm claude-code  # ~/.codex/sessions/を読み取り、`claude -p`を使用
+python scripts/ae-miner.py --llm codex          # `codex exec`を使用
 python scripts/ae-miner.py --llm gemini         # `gemini`を使用
 ```
 
