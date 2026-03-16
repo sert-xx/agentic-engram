@@ -16,6 +16,8 @@ flowchart LR
     D --> E["memory-db/\nvector_store + graph_store"]
     E -->|hybrid search| F["ae-recall"]
     F -->|context| A
+    E -->|similarity clustering| H["ae-consolidate\n(LLM merge/skill)"]
+    H -->|merged memories| E
     E --> G["ae-console\n(Streamlit UI)"]
 ```
 
@@ -25,7 +27,8 @@ flowchart LR
 2. **採掘** -- `ae-miner`（cron）が`mtime`+行ポインタカーソルで変更ログを検出し、JSONLをパースして可読テキストに変換し、差分をLLMに送信。LLMがINSERT / UPDATE / SKIPを判定する。
 3. **保存** -- `ae-save`が`sentence-transformers`でペイロードを埋め込みベクトル化し、LanceDBにupsertする。エンティティとリレーションはKuzuグラフDBに同期される。
 4. **想起** -- `ae-recall`がハイブリッド検索（ベクトル類似度 + グラフトラバーサル）を実行。エージェントは未知のエラーに遭遇した際に自律的に呼び出す。
-5. **管理** -- `ae-console`がStreamlitダッシュボードを提供し、メモリの閲覧・検索・削除やエンティティグラフの探索ができる。
+5. **統合** -- `ae-consolidate`がコサイン類似度で類似メモリをクラスタリングし、LLMで重複を統合。頻出パターン（出現回数 ≥ 3）は再利用可能なスキルファイルに昇格する。
+6. **管理** -- `ae-console`がStreamlitダッシュボードを提供し、メモリの閲覧・検索・削除やエンティティグラフの探索ができる。
 
 ## 機能
 
@@ -91,6 +94,7 @@ streamlit run scripts/ae-console.py
     graph_store/         Kuzuデータ（エンティティグラフ）
   config/
     cursor.json          ログファイルごとの行ポインタ + mtime
+  skills/                ae-consolidateが生成するスキルファイル
 ```
 
 | コンポーネント | ファイル | 役割 |
@@ -103,6 +107,8 @@ streamlit run scripts/ae-console.py
 | `parsers` | `src/engram/parsers/` | ネイティブログパーサー（Claude Code、Codex CLI） |
 | `cursor` | `src/engram/cursor.py` | cursor.jsonのアトミックな状態管理 |
 | `prompts` | `src/engram/prompts.py` | 抽出用LLMプロンプト構築 |
+| `consolidate` | `src/engram/consolidate.py` | 類似度クラスタリング、統合・スキル化ロジック |
+| `prompts_consolidate` | `src/engram/prompts_consolidate.py` | 統合用LLMプロンプト構築 |
 | `embedder` | `src/engram/embedder.py` | sentence-transformersのシングルトンラッパー |
 | `console` | `src/engram/console.py` | Streamlit UIロジック（統計、閲覧、削除、グラフ） |
 
@@ -134,6 +140,22 @@ python scripts/ae-miner.py --llm claude-code|codex|gemini
                            [--source claude-code|codex|text] [--log-dir DIR]
                            [--db-path PATH] [--cursor-path PATH] [--dry-run]
 ```
+
+### ae-consolidate
+
+コサイン類似度で類似メモリクラスタを検出し、LLMでMERGE（統合）、KEEP（維持）、SKILL（手順書に昇格）を判断する。
+
+```
+python scripts/ae-consolidate.py --llm claude-code|codex|gemini
+                                  [--model MODEL] [--threshold 0.90]
+                                  [--db-path PATH] [--graph-path PATH]
+                                  [--skills-dir DIR] [--dry-run]
+```
+
+- `--dry-run`のみ（`--llm`なし）：検出されたクラスタをプレビュー（LLM不要）
+- `--dry-run` + `--llm`：LLMの判断結果を表示するがDBは変更しない
+- `--threshold`：クラスタリングのコサイン類似度閾値（デフォルト: 0.90）
+- `--model`：LLMバックエンドに渡すモデル（例：`sonnet`）
 
 ### ae-console
 
@@ -261,7 +283,7 @@ pytest -v
 ## ロードマップ
 
 - ~~**V2: グラフDB拡張**~~ -- **完了。** [Kuzu](https://kuzudb.com/)統合によるGraphRAGスタイルのハイブリッド検索（ベクトル類似度 + グラフトラバーサル）。
-- **V3: メモリ統合** -- 類似した記憶の自動重複排除・マージ。
+- ~~**V3: メモリ統合**~~ -- **完了。** コサイン類似度クラスタリング + LLM判断による類似メモリの自動重複排除・マージ。頻出パターン（出現回数 ≥ 3）は再利用可能なスキルファイルに昇格可能。
 
 ## ライセンス
 
