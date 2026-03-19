@@ -1,9 +1,65 @@
-"""Entity/Relation 再抽出用 LLM プロンプト (ae-groom Phase 2)."""
+"""ae-groom 用 LLM プロンプト（カテゴリ分類 / Entity再抽出）."""
 
 from __future__ import annotations
 
 import json
 from typing import Dict, List
+
+
+def build_category_classification_prompt(
+    memories: List[Dict],
+    canonical_categories: List[str],
+) -> List[Dict[str, str]]:
+    """未知カテゴリのメモリを正規カテゴリに分類するプロンプトを構築する。
+
+    Args:
+        memories: カテゴリ分類対象のメモリ辞書リスト（各要素に id, event, context, core_lessons, category）
+        canonical_categories: 正規カテゴリのリスト
+
+    Returns:
+        [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
+    """
+    categories_list = "\n".join(f"- `{c}`" for c in canonical_categories)
+
+    system_content = f"""\
+あなたは開発知見の記憶を適切なカテゴリに分類する専門家です。
+
+以下の正規カテゴリ一覧から、各メモリに最も適切なカテゴリを1つ選んでください。
+
+## 正規カテゴリ
+{categories_list}
+
+## ルール
+- 必ず上記の正規カテゴリから1つを選ぶこと（新しいカテゴリを作らない）
+- メモリの event, context, core_lessons の内容を総合的に判断すること
+- 迷った場合は最も近いものを選ぶこと
+
+## 出力形式
+JSON配列を返してください。各要素は入力メモリに対応し、以下の形式です:
+
+```json
+[
+  {{"id": "メモリID", "category": "選択したカテゴリ"}}
+]
+```
+
+JSONのみを返してください。説明文は不要です。"""
+
+    user_parts: List[str] = ["以下のメモリを適切なカテゴリに分類してください。\n"]
+
+    for i, mem in enumerate(memories, 1):
+        user_parts.append(
+            f"### メモリ {i} (id: {mem.get('id', '')})\n"
+            f"- **current_category**: {mem.get('category', '')}\n"
+            f"- **event**: {mem.get('event', '')}\n"
+            f"- **context**: {mem.get('context', '')}\n"
+            f"- **core_lessons**: {mem.get('core_lessons', '')}\n"
+        )
+
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": "\n".join(user_parts)},
+    ]
 
 
 def build_entity_extraction_prompt(

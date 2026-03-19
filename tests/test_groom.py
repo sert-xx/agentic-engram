@@ -6,6 +6,7 @@ import pytest
 
 from engram.groom import (
     CATEGORY_MAP,
+    CANONICAL_CATEGORIES,
     analyze_categories,
     normalize_categories,
     analyze_entities,
@@ -13,8 +14,12 @@ from engram.groom import (
     rebuild_graph,
     cleanup_orphan_entities,
     _parse_extraction_response,
+    _parse_category_response,
 )
-from engram.prompts_groom import build_entity_extraction_prompt
+from engram.prompts_groom import (
+    build_entity_extraction_prompt,
+    build_category_classification_prompt,
+)
 
 
 # === テストヘルパー ===
@@ -127,12 +132,70 @@ class TestNormalizeCategories:
         assert "debugging" in categories
         assert "implementation" in categories
 
-    def test_skips_unknown_categories(self, tmp_db_path):
+    def test_skips_unknown_without_llm(self, tmp_db_path):
         _insert_test_memories(tmp_db_path, [
             {"id": _make_id("a"), "event": "ev1", "category": "unknown_cat"},
         ])
         result = normalize_categories(tmp_db_path)
         assert result["renamed"] == 0
+        assert result["llm_classified"] == 0
+        assert result["skipped_unknown"] == 1
+
+    def test_classifies_unknown_with_llm(self, tmp_db_path):
+        _insert_test_memories(tmp_db_path, [
+            {"id": _make_id("a"), "event": "Next.jsのSSRで問題", "category": "web-dev"},
+            {"id": _make_id("b"), "event": "CI修正", "category": "devops"},
+        ])
+
+        def mock_llm(messages):
+            return json.dumps([
+                {"id": _make_id("a"), "category": "frontend"},
+                {"id": _make_id("b"), "category": "operations"},
+            ])
+
+        result = normalize_categories(tmp_db_path, llm_fn=mock_llm)
+        assert result["llm_classified"] == 2
+        assert result["skipped_unknown"] == 0
+
+        from engram.db import get_table
+        df = get_table(tmp_db_path).to_pandas()
+        categories = set(df["category"])
+        assert "web-dev" not in categories
+        assert "devops" not in categories
+        assert "frontend" in categories
+        assert "operations" in categories
+
+    def test_mixed_fixed_and_llm(self, tmp_db_path):
+        """固定マッピングとLLM分類が混在するケース。"""
+        _insert_test_memories(tmp_db_path, [
+            {"id": _make_id("a"), "event": "ev1", "category": "troubleshooting"},
+            {"id": _make_id("b"), "event": "ev2", "category": "exotic_category"},
+            {"id": _make_id("c"), "event": "ev3", "category": "debugging"},
+        ])
+
+        def mock_llm(messages):
+            return json.dumps([
+                {"id": _make_id("b"), "category": "tooling"},
+            ])
+
+        result = normalize_categories(tmp_db_path, llm_fn=mock_llm)
+        assert result["renamed"] == 1       # troubleshooting -> debugging
+        assert result["llm_classified"] == 1  # exotic_category -> tooling
+        assert result["skipped_unknown"] == 0
+
+    def test_llm_returns_invalid_category(self, tmp_db_path):
+        """LLMが正規カテゴリにない値を返した場合はスキップ。"""
+        _insert_test_memories(tmp_db_path, [
+            {"id": _make_id("a"), "event": "ev1", "category": "unknown_cat"},
+        ])
+
+        def mock_llm(messages):
+            return json.dumps([
+                {"id": _make_id("a"), "category": "not_a_real_category"},
+            ])
+
+        result = normalize_categories(tmp_db_path, llm_fn=mock_llm)
+        assert result["llm_classified"] == 0
         assert result["skipped_unknown"] == 1
 
     def test_preserves_other_fields(self, tmp_db_path):
@@ -355,3 +418,41 @@ class TestBuildEntityExtractionPrompt:
         messages = build_entity_extraction_prompt(memories)
         assert "メモリ 1" in messages[1]["content"]
         assert "メモリ 2" in messages[1]["content"]
+
+
+class TestBuildCategoryClassificationPrompt:
+    def test_includes_canonical_categories(self):
+        memories = [{"id": "a", "event": "ev1", "context": "", "core_lessons": "", "category": "unknown"}]
+        messages = build_category_classification_prompt(memories, CANONICAL_CATEGORIES)
+        assert len(messages) == 2
+        # 正規カテゴリがプロンプトに含まれる
+        for cat in ["debugging", "architecture", "frontend"]:
+            assert cat in messages[0]["content"]
+
+    def test_includes_memory_content(self):
+        memories = [{"id": "abc", "event": "test event", "context": "ctx", "core_lessons": "lesson", "category": "x"}]
+        messages = build_category_classification_prompt(memories, ["debugging", "testing"])
+        assert "test event" in messages[1]["content"]
+        assert "abc" in messages[1]["content"]
+
+
+class TestParseCategoryResponse:
+    def test_parses_valid_response(self):
+        batch = [{"id": "abc"}, {"id": "def"}]
+        response = json.dumps([
+            {"id": "abc", "category": "debugging"},
+            {"id": "def", "category": "testing"},
+        ])
+        result = _parse_category_response(response, batch)
+        assert result["abc"] == "debugging"
+        assert result["def"] == "testing"
+
+    def test_fallback_to_index(self):
+        batch = [{"id": "abc"}]
+        response = '[{"category": "frontend"}]'
+        result = _parse_category_response(response, batch)
+        assert result["abc"] == "frontend"
+
+    def test_raises_on_no_json(self):
+        with pytest.raises(ValueError, match="No JSON"):
+            _parse_category_response("no json here", [])

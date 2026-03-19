@@ -120,6 +120,9 @@ def main():
         print("ERROR: --llm is required for entity re-extraction (or use --dry-run to preview)")
         sys.exit(1)
 
+    # LLM ファクトリ（Phase 1, 2 で共用）
+    llm_fn = _make_cli_llm(args.llm, model=args.model) if args.llm else None
+
     # ── Phase 1: Category 正規化 ──
     if run_phase1:
         print("=== Phase 1: Category Normalization ===")
@@ -134,11 +137,14 @@ def main():
 
         if analysis["unknown"]:
             for cat, cnt in analysis["unknown"].items():
-                print(f"  [UNKNOWN] {cat} ({cnt} records)")
+                if llm_fn:
+                    print(f"  [LLM] {cat} ({cnt} records) -> will classify via LLM")
+                else:
+                    print(f"  [UNKNOWN] {cat} ({cnt} records) -> use --llm to classify")
 
-        if not args.dry_run and analysis["to_rename"]:
-            result = normalize_categories(args.db_path)
-            print(f"  Renamed: {result['renamed']}, Skipped (unknown): {result['skipped_unknown']}")
+        if not args.dry_run and (analysis["to_rename"] or analysis["unknown"]):
+            result = normalize_categories(args.db_path, llm_fn=llm_fn)
+            print(f"  Renamed (fixed): {result['renamed']}, LLM classified: {result['llm_classified']}, Skipped: {result['skipped_unknown']}")
         print()
 
     # ── Phase 2: Entity/Relation 再抽出 ──
@@ -150,8 +156,6 @@ def main():
         print(f"Will re-extract: {analysis['to_re_extract']} (all)")
 
         if not args.dry_run:
-            llm_fn = _make_cli_llm(args.llm, model=args.model)
-
             def progress(processed, total):
                 print(f"  Progress: {processed}/{total}", end="\r", flush=True)
 

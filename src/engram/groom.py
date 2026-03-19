@@ -14,7 +14,7 @@ from engram.db import get_table, delete_records, insert_records, TABLE_NAME
 
 logger = logging.getLogger(__name__)
 
-# Phase 1: Category 正規化マッピング
+# Phase 1: Category 正規化マッピング（固定マッピング）
 CATEGORY_MAP = {
     # 統合対象
     "troubleshooting": "debugging",
@@ -43,6 +43,9 @@ CATEGORY_MAP = {
     "infrastructure": "infrastructure",
     "frontend": "frontend",
 }
+
+# 正規カテゴリ一覧（CATEGORY_MAP の値の一意集合）
+CANONICAL_CATEGORIES = sorted(set(CATEGORY_MAP.values()))
 
 
 def _load_all_records(db_path: str) -> pa.Table:
@@ -88,36 +91,41 @@ def analyze_categories(db_path: str) -> Dict[str, Any]:
     }
 
 
-def normalize_categories(db_path: str) -> Dict[str, int]:
+def normalize_categories(
+    db_path: str,
+    llm_fn: Optional[Callable] = None,
+    batch_size: int = 10,
+) -> Dict[str, int]:
     """Phase 1: category を正規マッピングに従って書き換える。
 
+    固定マッピングにないカテゴリは llm_fn が指定されていれば LLM で分類する。
+
     Returns:
-        {"renamed": N, "skipped_unknown": N}
+        {"renamed": N, "llm_classified": N, "skipped_unknown": N}
     """
     table = get_table(db_path)
     arrow = table.to_arrow()
 
     renamed = 0
+    llm_classified = 0
     skipped_unknown = 0
+
+    # Pass 1: 固定マッピングで処理 & unknown を収集
+    unknown_indices: List[int] = []
 
     for i in range(len(arrow)):
         rec = _record_to_dict(arrow, i)
         old_cat = rec.get("category", "")
         if old_cat not in CATEGORY_MAP:
-            logger.warning("Unknown category '%s' for id=%s, skipping", old_cat, rec.get("id"))
-            skipped_unknown += 1
+            unknown_indices.append(i)
             continue
 
         new_cat = CATEGORY_MAP[old_cat]
         if old_cat == new_cat:
             continue
 
-        # delete + re-insert で更新
         record_id = rec["id"]
         rec["category"] = new_cat
-        del rec["vector"]  # 再埋め込み不要、既存vectorを使う
-
-        # vectorを元データから取得
         vec = arrow.column("vector")[i].as_py()
         rec["vector"] = vec
 
@@ -125,7 +133,109 @@ def normalize_categories(db_path: str) -> Dict[str, int]:
         insert_records([rec], db_path)
         renamed += 1
 
-    return {"renamed": renamed, "skipped_unknown": skipped_unknown}
+    # Pass 2: unknown カテゴリを LLM で分類
+    if unknown_indices and llm_fn is not None:
+        llm_results = _classify_unknown_categories(
+            arrow, unknown_indices, llm_fn, batch_size
+        )
+        for i, new_cat in llm_results.items():
+            rec = _record_to_dict(arrow, i)
+            if new_cat == rec.get("category", ""):
+                continue
+            rec["category"] = new_cat
+            vec = arrow.column("vector")[i].as_py()
+            rec["vector"] = vec
+            record_id = rec["id"]
+            delete_records([record_id], db_path)
+            insert_records([rec], db_path)
+            llm_classified += 1
+
+        skipped_unknown = len(unknown_indices) - len(llm_results)
+    else:
+        skipped_unknown = len(unknown_indices)
+        if unknown_indices and llm_fn is None:
+            for i in unknown_indices:
+                cat = arrow.column("category")[i].as_py()
+                logger.warning("Unknown category '%s', skipping (use --llm to classify)", cat)
+
+    return {"renamed": renamed, "llm_classified": llm_classified, "skipped_unknown": skipped_unknown}
+
+
+def _classify_unknown_categories(
+    arrow: pa.Table,
+    indices: List[int],
+    llm_fn: Callable,
+    batch_size: int = 10,
+) -> Dict[int, str]:
+    """LLM で未知カテゴリのメモリを正規カテゴリに分類する。
+
+    Returns:
+        {arrow_index: new_category} のマッピング
+    """
+    from engram.prompts_groom import build_category_classification_prompt
+
+    results: Dict[int, str] = {}
+
+    for batch_start in range(0, len(indices), batch_size):
+        batch_indices = indices[batch_start:batch_start + batch_size]
+        batch_mems = [_record_to_dict(arrow, i) for i in batch_indices]
+
+        messages = build_category_classification_prompt(batch_mems, CANONICAL_CATEGORIES)
+        try:
+            response = llm_fn(messages)
+            classifications = _parse_category_response(response, batch_mems)
+        except Exception as e:
+            logger.error("LLM category classification failed: %s", e)
+            continue
+
+        for idx, mem in zip(batch_indices, batch_mems):
+            mem_id = mem.get("id", "")
+            new_cat = classifications.get(mem_id)
+            if new_cat and new_cat in CANONICAL_CATEGORIES:
+                results[idx] = new_cat
+            else:
+                logger.warning(
+                    "LLM returned invalid category '%s' for id=%s, skipping",
+                    new_cat, mem_id,
+                )
+
+    return results
+
+
+def _parse_category_response(
+    response: str,
+    batch_mems: List[Dict],
+) -> Dict[str, str]:
+    """LLM レスポンスから {id: category} マッピングを抽出する。"""
+    start = response.find("[")
+    if start == -1:
+        raise ValueError("No JSON array found in response")
+
+    depth = 0
+    for i in range(start, len(response)):
+        if response[i] == "[":
+            depth += 1
+        elif response[i] == "]":
+            depth -= 1
+            if depth == 0:
+                parsed = json.loads(response[start : i + 1])
+                break
+    else:
+        raise ValueError("Incomplete JSON array in response")
+
+    # id -> category マッピングを構築
+    id_to_cat: Dict[str, str] = {}
+    for item in parsed:
+        if "id" in item and "category" in item:
+            id_to_cat[item["id"]] = item["category"]
+
+    # id マッチできなかった場合は順序ベースのフォールバック
+    if not id_to_cat and len(parsed) == len(batch_mems):
+        for mem, item in zip(batch_mems, parsed):
+            if "category" in item:
+                id_to_cat[mem.get("id", "")] = item["category"]
+
+    return id_to_cat
 
 
 # ──────────────────────────────────────────────
