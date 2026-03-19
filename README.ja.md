@@ -28,7 +28,8 @@ flowchart LR
 3. **保存** -- `ae-save`が`sentence-transformers`でペイロードを埋め込みベクトル化し、LanceDBにupsertする。エンティティとリレーションはKuzuグラフDBに同期される。
 4. **想起** -- `ae-recall`がハイブリッド検索（ベクトル類似度 + グラフトラバーサル）を実行。エージェントは未知のエラーに遭遇した際に自律的に呼び出す。
 5. **統合** -- `ae-consolidate`がコサイン類似度で類似メモリをクラスタリングし、LLMで重複を統合。頻出パターン（出現回数 ≥ 3）は再利用可能なスキルファイルに昇格する。
-6. **管理** -- `ae-console`がStreamlitダッシュボードを提供し、メモリの閲覧・検索・削除やエンティティグラフの探索ができる。
+6. **整理** -- `ae-groom`がカテゴリの正規化、エンティティ/リレーションのLLM再抽出、グラフDBの再構築、孤立エンティティの掃除を一括で行う。
+7. **管理** -- `ae-console`がStreamlitダッシュボードを提供し、メモリの閲覧・検索・削除やエンティティグラフの探索ができる。
 
 ## 機能
 
@@ -110,6 +111,8 @@ streamlit run scripts/ae-console.py
 | `consolidate` | `src/engram/consolidate.py` | 類似度クラスタリング、統合・スキル化ロジック |
 | `prompts_consolidate` | `src/engram/prompts_consolidate.py` | 統合用LLMプロンプト構築 |
 | `embedder` | `src/engram/embedder.py` | sentence-transformersのシングルトンラッパー |
+| `groom` | `src/engram/groom.py` | 一括メンテナンス：カテゴリ正規化、エンティティ再抽出、グラフ再構築 |
+| `prompts_groom` | `src/engram/prompts_groom.py` | エンティティ再抽出用LLMプロンプト構築 |
 | `console` | `src/engram/console.py` | Streamlit UIロジック（統計、閲覧、削除、グラフ） |
 
 ## CLIリファレンス
@@ -156,6 +159,34 @@ python scripts/ae-consolidate.py --llm claude-code|codex|gemini
 - `--dry-run` + `--llm`：LLMの判断結果を表示するがDBは変更しない
 - `--threshold`：クラスタリングのコサイン類似度閾値（デフォルト: 0.90）
 - `--model`：LLMバックエンドに渡すモデル（例：`sonnet`）
+
+### ae-groom
+
+長期記憶の一括メンテナンス：カテゴリ正規化、エンティティ/リレーション再抽出、グラフDB再構築、孤立エンティティ掃除。
+
+```
+python scripts/ae-groom.py --llm claude-code|codex|gemini
+                            [--model MODEL] [--batch-size N]
+                            [--db-path PATH] [--graph-path PATH]
+                            [--normalize-categories-only]
+                            [--re-extract-only]
+                            [--rebuild-graph-only]
+                            [--dry-run]
+```
+
+- `--dry-run`：各フェーズの対象件数を表示するがDBは変更しない
+- `--normalize-categories-only`：Phase 1のみ実行（LLM不要）
+- `--re-extract-only`：Phase 2のみ実行（LLM必要）
+- `--rebuild-graph-only`：Phase 3+4のみ実行（LLM不要）
+- `--batch-size`：エンティティ再抽出の1回のLLM呼び出しで処理するメモリ件数（デフォルト: 5）
+- `--model`：LLMバックエンドに渡すモデル（例：`sonnet`）
+
+**フェーズ:**
+
+1. **カテゴリ正規化** -- 分散したカテゴリを正規マッピングに従って統合（例：`troubleshooting` → `debugging`、`backend` → `implementation`）
+2. **エンティティ/リレーション再抽出** -- 全メモリをLLMに送り、統一された品質でエンティティとリレーションを再抽出する
+3. **グラフDB再構築** -- VectorDBをSingle Source of TruthとしてKuzuグラフDBを削除・再構築する
+4. **孤立エンティティ掃除** -- `mention_count ≤ 0` のエンティティを削除する
 
 ### ae-console
 

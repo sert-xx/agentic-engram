@@ -28,7 +28,8 @@ flowchart LR
 3. **Store** -- `ae-save` embeds payloads with `sentence-transformers` and upserts into LanceDB. Entities and relations are synced to Kuzu graph DB.
 4. **Recall** -- `ae-recall` performs hybrid search (vector similarity + graph traversal). Agents call it autonomously when they hit unknown errors.
 5. **Consolidate** -- `ae-consolidate` clusters similar memories by cosine similarity and uses LLM to merge duplicates or promote recurring patterns (occurrence count ≥ 3) to reusable skill files.
-6. **Manage** -- `ae-console` provides a Streamlit dashboard for browsing, searching, deleting memories and exploring the entity graph.
+6. **Groom** -- `ae-groom` performs bulk maintenance: normalizes categories, re-extracts entities/relations via LLM, rebuilds the graph DB from vector DB, and cleans up orphan entities.
+7. **Manage** -- `ae-console` provides a Streamlit dashboard for browsing, searching, deleting memories and exploring the entity graph.
 
 ## Features
 
@@ -110,6 +111,8 @@ streamlit run scripts/ae-console.py
 | `consolidate` | `src/engram/consolidate.py` | Similarity clustering, merge/skill logic |
 | `prompts_consolidate` | `src/engram/prompts_consolidate.py` | LLM prompt construction for consolidation |
 | `embedder` | `src/engram/embedder.py` | Sentence-transformers singleton wrapper |
+| `groom` | `src/engram/groom.py` | Bulk maintenance: category normalization, entity re-extraction, graph rebuild |
+| `prompts_groom` | `src/engram/prompts_groom.py` | LLM prompt construction for entity re-extraction |
 | `console` | `src/engram/console.py` | Streamlit UI logic (stats, browse, delete, graph) |
 
 ## CLI Reference
@@ -156,6 +159,34 @@ python scripts/ae-consolidate.py --llm claude-code|codex|gemini
 - `--dry-run` with `--llm`: show LLM decisions without modifying the DB
 - `--threshold`: cosine similarity threshold for clustering (default: 0.90)
 - `--model`: model to pass to the LLM backend (e.g. `sonnet`)
+
+### ae-groom
+
+Bulk maintenance for long-term memories: category normalization, entity/relation re-extraction, graph DB rebuild, and orphan entity cleanup.
+
+```
+python scripts/ae-groom.py --llm claude-code|codex|gemini
+                            [--model MODEL] [--batch-size N]
+                            [--db-path PATH] [--graph-path PATH]
+                            [--normalize-categories-only]
+                            [--re-extract-only]
+                            [--rebuild-graph-only]
+                            [--dry-run]
+```
+
+- `--dry-run`: preview what each phase would do without modifying the DB
+- `--normalize-categories-only`: run Phase 1 only (no LLM required)
+- `--re-extract-only`: run Phase 2 only (LLM required)
+- `--rebuild-graph-only`: run Phase 3+4 only (no LLM required)
+- `--batch-size`: number of memories per LLM call for entity re-extraction (default: 5)
+- `--model`: model to pass to the LLM backend (e.g. `sonnet`)
+
+**Phases:**
+
+1. **Category normalization** -- maps scattered categories (e.g. `troubleshooting` → `debugging`, `backend` → `implementation`) to a canonical set
+2. **Entity/relation re-extraction** -- sends all memories to an LLM to re-extract entities and relations with consistent quality
+3. **Graph DB rebuild** -- deletes and rebuilds the Kuzu graph DB from VectorDB as the single source of truth
+4. **Orphan entity cleanup** -- removes entities with `mention_count ≤ 0`
 
 ### ae-console
 
