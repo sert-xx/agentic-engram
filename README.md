@@ -303,6 +303,8 @@ crontab -e
 
 Create `~/Library/LaunchAgents/com.engram.miner.plist`:
 
+Using uv:
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -313,6 +315,38 @@ Create `~/Library/LaunchAgents/com.engram.miner.plist`:
   <string>com.engram.miner</string>
   <key>ProgramArguments</key>
   <array>
+    <string>/path/to/uv</string>
+    <string>run</string>
+    <string>--project</string>
+    <string>/path/to/agentic-engram</string>
+    <string>ae-miner</string>
+    <string>--llm</string>
+    <string>claude-code</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/.engram/miner.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/.engram/miner.log</string>
+</dict>
+</plist>
+```
+
+Using pip:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.engram.miner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/agentic-engram/.venv/bin/python</string>
+    <string>-u</string>
     <string>/path/to/agentic-engram/.venv/bin/ae-miner</string>
     <string>--llm</string>
     <string>claude-code</string>
