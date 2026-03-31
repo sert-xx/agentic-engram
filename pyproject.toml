@@ -26,11 +26,10 @@ dependencies = [
     "pyarrow",
     "streamlit",
     "kuzu",
-    "pytest>=8.4.2",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest>=8.4.2"]
 
 [project.urls]
 Repository = "https://github.com/sert-xx/agentic-engram"
