@@ -47,9 +47,31 @@ flowchart LR
 ### Requirements
 
 - Python 3.9+
+- [uv](https://docs.astral.sh/uv/) or pip
 - An AI coding agent that saves session logs (e.g., Claude Code)
 
 ### Install
+
+#### Using uv
+
+```bash
+uv sync --extra dev
+```
+
+This creates a `.venv` automatically, installs all dependencies, and registers CLI commands. Run commands via `uv run`:
+
+```bash
+uv run ae-recall --query "CORS error" --format markdown
+```
+
+Or activate the virtualenv first:
+
+```bash
+source .venv/bin/activate
+ae-recall --query "CORS error" --format markdown
+```
+
+#### Using pip
 
 ```bash
 pip install -e ".[dev]"
@@ -270,12 +292,48 @@ crontab -e
 ```
 
 ```cron
-*/30 * * * * cd /path/to/agentic-engram && .venv/bin/python scripts/ae-miner.py --llm claude-code >> ~/.engram/miner.log 2>&1
+# Using uv
+*/30 * * * * cd /path/to/agentic-engram && uv run ae-miner --llm claude-code >> ~/.engram/miner.log 2>&1
+
+# Using pip (virtualenv)
+*/30 * * * * cd /path/to/agentic-engram && .venv/bin/ae-miner --llm claude-code >> ~/.engram/miner.log 2>&1
 ```
 
 ### launchd (macOS recommended)
 
 Create `~/Library/LaunchAgents/com.engram.miner.plist`:
+
+Using uv:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.engram.miner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/uv</string>
+    <string>run</string>
+    <string>--project</string>
+    <string>/path/to/agentic-engram</string>
+    <string>ae-miner</string>
+    <string>--llm</string>
+    <string>claude-code</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/.engram/miner.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/.engram/miner.log</string>
+</dict>
+</plist>
+```
+
+Using pip:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -288,7 +346,8 @@ Create `~/Library/LaunchAgents/com.engram.miner.plist`:
   <key>ProgramArguments</key>
   <array>
     <string>/path/to/agentic-engram/.venv/bin/python</string>
-    <string>/path/to/agentic-engram/scripts/ae-miner.py</string>
+    <string>-u</string>
+    <string>/path/to/agentic-engram/.venv/bin/ae-miner</string>
     <string>--llm</string>
     <string>claude-code</string>
   </array>
@@ -315,6 +374,11 @@ For Linux servers, create a systemd service + timer pair under `~/.config/system
 ## Development
 
 ```bash
+# Using uv
+uv sync --extra dev
+uv run pytest -v
+
+# Using pip
 pip install -e ".[dev]"
 pytest -v
 ```
