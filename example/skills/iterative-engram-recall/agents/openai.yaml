@@ -1,0 +1,4 @@
+interface:
+  display_name: "Iterative Engram Recall"
+  short_description: "Retrieve long-term memory for an Agentic Engram using standard procedures"
+  default_prompt: "Use $iterative-engram-recall to search your long-term memory for past context or solutions."
